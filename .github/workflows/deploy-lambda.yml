@@ -108,8 +108,7 @@ jobs:
           done
           echo "Timed out"; exit 1
 
-      - name: Add SNS trigger (new function only)
-        if: env.FUNCTION_CREATED == 'true'
+      - name: Ensure SNS trigger is configured
         run: |
           FUNCTION_ARN=$(aws lambda get-function \
             --function-name ${{ env.FUNCTION_NAME }} \
@@ -117,7 +116,12 @@ jobs:
             --query 'Configuration.FunctionArn' \
             --output text)
 
-          echo "Adding SNS permission to Lambda"
+          # Add resource-based permission (idempotent — remove first if exists)
+          aws lambda remove-permission \
+            --function-name ${{ env.FUNCTION_NAME }} \
+            --statement-id sns-invoke \
+            --region ${{ secrets.AWS_REGION }} 2>/dev/null || true
+
           aws lambda add-permission \
             --function-name ${{ env.FUNCTION_NAME }} \
             --statement-id sns-invoke \
@@ -126,9 +130,20 @@ jobs:
             --source-arn ${{ env.SNS_TOPIC_ARN }} \
             --region ${{ secrets.AWS_REGION }}
 
-          echo "Subscribing SNS topic to Lambda"
-          aws sns subscribe \
+          # Subscribe SNS topic if not already subscribed
+          EXISTING=$(aws sns list-subscriptions-by-topic \
             --topic-arn ${{ env.SNS_TOPIC_ARN }} \
-            --protocol lambda \
-            --notification-endpoint $FUNCTION_ARN \
-            --region ${{ secrets.AWS_REGION }}
+            --region ${{ secrets.AWS_REGION }} \
+            --query "Subscriptions[?Protocol=='lambda' && Endpoint=='$FUNCTION_ARN'].SubscriptionArn" \
+            --output text)
+
+          if [ -z "$EXISTING" ]; then
+            echo "Adding SNS subscription"
+            aws sns subscribe \
+              --topic-arn ${{ env.SNS_TOPIC_ARN }} \
+              --protocol lambda \
+              --notification-endpoint $FUNCTION_ARN \
+              --region ${{ secrets.AWS_REGION }}
+          else
+            echo "SNS subscription already exists: $EXISTING"
+          fi
