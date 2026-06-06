@@ -17,7 +17,11 @@ permissions:
 
 env:
   FUNCTION_NAME: ses-bounce-slack-notifier
-  AWS_REGION: ${{ secrets.AWS_REGION }}
+  RUNTIME: nodejs22.x
+  HANDLER: index.handler
+  MEMORY: 128
+  TIMEOUT: 3
+  ROLE_ARN: arn:aws:iam::183248602306:role/service-role/ses-bounce-slack-notifier-role-ezuv100o
 
 jobs:
   deploy:
@@ -39,29 +43,61 @@ jobs:
         working-directory: lambda/ses-bounce-slack-notifier
         run: zip function.zip index.mjs
 
-      - name: Update Lambda code
+      - name: Create or update Lambda function
         working-directory: lambda/ses-bounce-slack-notifier
         run: |
-          aws lambda update-function-code \
-            --function-name ${{ env.FUNCTION_NAME }} \
-            --zip-file fileb://function.zip \
-            --region ${{ env.AWS_REGION }}
+          if aws lambda get-function --function-name ${{ env.FUNCTION_NAME }} --region ${{ secrets.AWS_REGION }} > /dev/null 2>&1; then
+            echo "Function exists — updating code"
+            aws lambda update-function-code \
+              --function-name ${{ env.FUNCTION_NAME }} \
+              --zip-file fileb://function.zip \
+              --region ${{ secrets.AWS_REGION }}
+          else
+            echo "Function not found — creating"
+            aws lambda create-function \
+              --function-name ${{ env.FUNCTION_NAME }} \
+              --runtime ${{ env.RUNTIME }} \
+              --handler ${{ env.HANDLER }} \
+              --memory-size ${{ env.MEMORY }} \
+              --timeout ${{ env.TIMEOUT }} \
+              --role ${{ env.ROLE_ARN }} \
+              --zip-file fileb://function.zip \
+              --region ${{ secrets.AWS_REGION }}
+          fi
 
       - name: Wait for Lambda to be ready
         run: |
-          aws lambda wait function-updated-v2 \
-            --function-name ${{ env.FUNCTION_NAME }} \
-            --region ${{ env.AWS_REGION }}
+          for i in $(seq 1 12); do
+            STATE=$(aws lambda get-function \
+              --function-name ${{ env.FUNCTION_NAME }} \
+              --region ${{ secrets.AWS_REGION }} \
+              --query 'Configuration.LastUpdateStatus' \
+              --output text)
+            echo "[$i/12] LastUpdateStatus: $STATE"
+            [ "$STATE" = "Successful" ] && exit 0
+            [ "$STATE" = "Failed" ]     && { echo "Lambda update failed"; exit 1; }
+            sleep 5
+          done
+          echo "Timed out"; exit 1
 
       - name: Update Lambda environment variables
         run: |
           aws lambda update-function-configuration \
             --function-name ${{ env.FUNCTION_NAME }} \
-            --region ${{ env.AWS_REGION }} \
+            --region ${{ secrets.AWS_REGION }} \
             --environment "Variables={SLACK_WEBHOOK_URL=${{ secrets.SLACK_WEBHOOK_URL }}}"
 
       - name: Wait for Lambda to be ready
         run: |
-          aws lambda wait function-updated-v2 \
-            --function-name ${{ env.FUNCTION_NAME }} \
-            --region ${{ env.AWS_REGION }}
+          for i in $(seq 1 12); do
+            STATE=$(aws lambda get-function \
+              --function-name ${{ env.FUNCTION_NAME }} \
+              --region ${{ secrets.AWS_REGION }} \
+              --query 'Configuration.LastUpdateStatus' \
+              --output text)
+            echo "[$i/12] LastUpdateStatus: $STATE"
+            [ "$STATE" = "Successful" ] && exit 0
+            [ "$STATE" = "Failed" ]     && { echo "Lambda update failed"; exit 1; }
+            sleep 5
+          done
+          echo "Timed out"; exit 1
