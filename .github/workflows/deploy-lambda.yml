@@ -39,7 +39,28 @@ jobs:
         working-directory: lambda/ses-bounce-slack-notifier
         run: aws lambda update-function-code --function-name ses-bounce-slack-notifier --zip-file fileb://function.zip --region ${{ secrets.AWS_REGION }}
 
-      - name: Wait for Lambda update to complete
+      - name: Wait for Lambda code update to complete
+        run: |
+          for i in $(seq 1 12); do
+            STATE=$(aws lambda get-function-configuration \
+              --function-name ses-bounce-slack-notifier \
+              --region ${{ secrets.AWS_REGION }} \
+              --query 'LastUpdateStatus' \
+              --output text)
+            echo "Update status: $STATE"
+            if [ "$STATE" = "Successful" ]; then break; fi
+            if [ "$STATE" = "Failed" ]; then echo "Lambda code update failed"; exit 1; fi
+            sleep 5
+          done
+
+      - name: Update Lambda environment variables
+        run: |
+          aws lambda update-function-configuration \
+            --function-name ses-bounce-slack-notifier \
+            --region ${{ secrets.AWS_REGION }} \
+            --environment "Variables={SLACK_WEBHOOK_URL=${{ secrets.SLACK_WEBHOOK_URL }}}"
+
+      - name: Wait for Lambda configuration update to complete
         run: |
           for i in $(seq 1 12); do
             STATE=$(aws lambda get-function-configuration \
@@ -49,7 +70,7 @@ jobs:
               --output text)
             echo "Update status: $STATE"
             if [ "$STATE" = "Successful" ]; then exit 0; fi
-            if [ "$STATE" = "Failed" ]; then echo "Lambda update failed"; exit 1; fi
+            if [ "$STATE" = "Failed" ]; then echo "Lambda config update failed"; exit 1; fi
             sleep 5
           done
-          echo "Timed out waiting for Lambda update"; exit 1
+          echo "Timed out waiting for Lambda config update"; exit 1
