@@ -90,6 +90,7 @@ function formatTime(isoString) {
  */
 function formatThaiTime(isoString) {
   try {
+    log("debug", "formatThaiTime", { isoString });
     return new Date(isoString).toLocaleString("th-TH", {
       timeZone: "Asia/Bangkok",
       dateStyle: "medium",
