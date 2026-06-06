@@ -22,6 +22,7 @@ env:
   MEMORY: 128
   TIMEOUT: 3
   ROLE_ARN: arn:aws:iam::183248602306:role/service-role/ses-bounce-slack-notifier-role-ezuv100o
+  SNS_TOPIC_ARN: arn:aws:sns:us-east-1:183248602306:ses-reputation-alerts
 
 jobs:
   deploy:
@@ -54,7 +55,7 @@ jobs:
               --region ${{ secrets.AWS_REGION }}
           else
             echo "Function not found — creating"
-            aws lambda create-function \
+            FUNCTION_ARN=$(aws lambda create-function \
               --function-name ${{ env.FUNCTION_NAME }} \
               --runtime ${{ env.RUNTIME }} \
               --handler ${{ env.HANDLER }} \
@@ -62,7 +63,12 @@ jobs:
               --timeout ${{ env.TIMEOUT }} \
               --role ${{ env.ROLE_ARN }} \
               --zip-file fileb://function.zip \
-              --region ${{ secrets.AWS_REGION }}
+              --region ${{ secrets.AWS_REGION }} \
+              --query 'FunctionArn' \
+              --output text)
+            echo "Created function: $FUNCTION_ARN"
+            echo "FUNCTION_ARN=$FUNCTION_ARN" >> $GITHUB_ENV
+            echo "FUNCTION_CREATED=true" >> $GITHUB_ENV
           fi
 
       - name: Wait for Lambda to be ready
@@ -101,3 +107,28 @@ jobs:
             sleep 5
           done
           echo "Timed out"; exit 1
+
+      - name: Add SNS trigger (new function only)
+        if: env.FUNCTION_CREATED == 'true'
+        run: |
+          FUNCTION_ARN=$(aws lambda get-function \
+            --function-name ${{ env.FUNCTION_NAME }} \
+            --region ${{ secrets.AWS_REGION }} \
+            --query 'Configuration.FunctionArn' \
+            --output text)
+
+          echo "Adding SNS permission to Lambda"
+          aws lambda add-permission \
+            --function-name ${{ env.FUNCTION_NAME }} \
+            --statement-id sns-invoke \
+            --action lambda:InvokeFunction \
+            --principal sns.amazonaws.com \
+            --source-arn ${{ env.SNS_TOPIC_ARN }} \
+            --region ${{ secrets.AWS_REGION }}
+
+          echo "Subscribing SNS topic to Lambda"
+          aws sns subscribe \
+            --topic-arn ${{ env.SNS_TOPIC_ARN }} \
+            --protocol lambda \
+            --notification-endpoint $FUNCTION_ARN \
+            --region ${{ secrets.AWS_REGION }}
