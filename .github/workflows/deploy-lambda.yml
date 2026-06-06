@@ -15,6 +15,10 @@ concurrency:
 permissions:
   contents: read
 
+env:
+  FUNCTION_NAME: ses-bounce-slack-notifier
+  AWS_REGION: ${{ secrets.AWS_REGION }}
+
 jobs:
   deploy:
     name: Deploy
@@ -35,42 +39,29 @@ jobs:
         working-directory: lambda/ses-bounce-slack-notifier
         run: zip function.zip index.mjs
 
-      - name: Update Lambda function code
+      - name: Update Lambda code
         working-directory: lambda/ses-bounce-slack-notifier
-        run: aws lambda update-function-code --function-name ses-bounce-slack-notifier --zip-file fileb://function.zip --region ${{ secrets.AWS_REGION }}
-
-      - name: Wait for Lambda code update to complete
         run: |
-          for i in $(seq 1 12); do
-            STATE=$(aws lambda get-function-configuration \
-              --function-name ses-bounce-slack-notifier \
-              --region ${{ secrets.AWS_REGION }} \
-              --query 'LastUpdateStatus' \
-              --output text)
-            echo "Update status: $STATE"
-            if [ "$STATE" = "Successful" ]; then break; fi
-            if [ "$STATE" = "Failed" ]; then echo "Lambda code update failed"; exit 1; fi
-            sleep 5
-          done
+          aws lambda update-function-code \
+            --function-name ${{ env.FUNCTION_NAME }} \
+            --zip-file fileb://function.zip \
+            --region ${{ env.AWS_REGION }}
+
+      - name: Wait for Lambda to be ready
+        run: |
+          aws lambda wait function-updated-v2 \
+            --function-name ${{ env.FUNCTION_NAME }} \
+            --region ${{ env.AWS_REGION }}
 
       - name: Update Lambda environment variables
         run: |
           aws lambda update-function-configuration \
-            --function-name ses-bounce-slack-notifier \
-            --region ${{ secrets.AWS_REGION }} \
+            --function-name ${{ env.FUNCTION_NAME }} \
+            --region ${{ env.AWS_REGION }} \
             --environment "Variables={SLACK_WEBHOOK_URL=${{ secrets.SLACK_WEBHOOK_URL }}}"
 
-      - name: Wait for Lambda configuration update to complete
+      - name: Wait for Lambda to be ready
         run: |
-          for i in $(seq 1 12); do
-            STATE=$(aws lambda get-function-configuration \
-              --function-name ses-bounce-slack-notifier \
-              --region ${{ secrets.AWS_REGION }} \
-              --query 'LastUpdateStatus' \
-              --output text)
-            echo "Update status: $STATE"
-            if [ "$STATE" = "Successful" ]; then exit 0; fi
-            if [ "$STATE" = "Failed" ]; then echo "Lambda config update failed"; exit 1; fi
-            sleep 5
-          done
-          echo "Timed out waiting for Lambda config update"; exit 1
+          aws lambda wait function-updated-v2 \
+            --function-name ${{ env.FUNCTION_NAME }} \
+            --region ${{ env.AWS_REGION }}
