@@ -17,7 +17,8 @@
         "lambda:UpdateEventSourceMapping",
         "lambda:AddPermission",
         "lambda:RemovePermission",
-        "lambda:GetPolicy"
+        "lambda:GetPolicy",
+        "lambda:TagResource"
       ],
       "Resource": "arn:aws:lambda:us-east-1:183248602306:function:ses-bounce-slack-notifier"
     },
