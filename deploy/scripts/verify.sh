@@ -9,8 +9,11 @@ source "${SCRIPT_DIR}/lib/common.sh"
 load_env
 resolve_projects_config
 
+# Running total of failed checks — used to decide the script's exit code.
 FAILURES=0
 
+# Helper that prints a ✅/❌ line for a single check and increments
+# FAILURES when the check did not pass ("ok").
 check() {
   local name="$1"
   local result="$2"
@@ -27,6 +30,10 @@ echo "Region: ${AWS_REGION} | Function: ${FUNCTION_NAME} | Topic: ${SNS_TOPIC_NA
 echo ""
 
 # 1. Lambda function state
+# Confirm the Lambda function exists and is healthy: State should be
+# "Active" and the last code/config update should have finished
+# ("LastUpdateStatus=Successful"). Also surface the runtime and timeout
+# for a quick sanity check.
 LAMBDA_STATE="$(aws lambda get-function \
   --function-name "${FUNCTION_NAME}" \
   --region "${AWS_REGION}" \
@@ -50,7 +57,10 @@ else
 fi
 
 # 2. Lambda env vars
-# ใช้ get-function (lambda:GetFunction) — deploy user มักไม่มี GetFunctionConfiguration
+# Use get-function (lambda:GetFunction) instead of GetFunctionConfiguration —
+# the deploy user's IAM policy often only grants the former. Check that
+# WEBHOOK_MAP has at least one queue mapped, and that either a per-queue
+# webhook or the global SLACK_WEBHOOK_URL fallback is configured.
 LAMBDA_ENV="$(aws lambda get-function \
   --function-name "${FUNCTION_NAME}" \
   --region "${AWS_REGION}" \
@@ -74,6 +84,8 @@ else
     check "WEBHOOK_MAP configured" "missing or empty"
   fi
 
+  # SLACK_WEBHOOK_URL is only a fallback — it's fine to be unset as long as
+  # WEBHOOK_MAP already covers at least one queue.
   if [[ -n "${SLACK_URL_SET}" ]]; then
     check "SLACK_WEBHOOK_URL (fallback) set" "ok"
   elif [[ "${MAP_KEYS:-0}" -gt 0 ]]; then
@@ -85,6 +97,7 @@ else
 fi
 
 # 3. SNS topic
+# Confirm the SNS topic exists and is reachable with current credentials.
 if aws sns list-subscriptions-by-topic --topic-arn "${SNS_TOPIC_ARN}" --region "${AWS_REGION}" >/dev/null 2>&1; then
   check "SNS topic ${SNS_TOPIC_NAME}" "ok"
 else
@@ -92,7 +105,13 @@ else
 fi
 
 # 4. Per-project: SQS queue, SNS subscription, Lambda trigger
+# For every project in the config, verify the full chain end-to-end:
+#   SQS queue exists → SNS subscription exists with FilterPolicyScope=MessageBody
+#   → Lambda has an enabled SQS trigger pointing at that queue.
 QUEUE_COUNT="$(jq '.projects | length' "${PROJECTS_CONFIG}")"
+
+# Pre-fetch the Lambda's enabled event source mappings and the topic's
+# subscriptions once, outside the loop, to avoid redundant API calls per project.
 MAPPING_ARNS="$(aws lambda list-event-source-mappings \
   --function-name "${FUNCTION_NAME}" \
   --region "${AWS_REGION}" \
@@ -113,6 +132,8 @@ for i in $(seq 0 $((QUEUE_COUNT - 1))); do
   echo ""
   echo "Project: ${PROJECT_LABEL} (${QUEUE_NAME})"
 
+  # 4a. Does the SQS queue exist at all? If not, skip the remaining checks
+  # for this project since they all depend on the queue's ARN.
   if aws sqs get-queue-url --queue-name "${QUEUE_NAME}" --region "${AWS_REGION}" >/dev/null 2>&1; then
     check "  SQS queue ${QUEUE_NAME}" "ok"
   else
@@ -122,6 +143,9 @@ for i in $(seq 0 $((QUEUE_COUNT - 1))); do
 
   QUEUE_ARN="$(get_queue_arn "${QUEUE_NAME}")"
 
+  # 4b. Is there an SNS subscription pointing at this queue, and is its
+  # FilterPolicyScope correctly set to MessageBody (required for the
+  # filter policy to match against the SES notification JSON)?
   SUB_ARN="$(echo "${SUBSCRIPTIONS}" | jq -r \
     --arg arn "${QUEUE_ARN}" \
     '.Subscriptions[] | select(.Protocol=="sqs" and .Endpoint==$arn) | .SubscriptionArn' | head -1)"
@@ -141,6 +165,8 @@ for i in $(seq 0 $((QUEUE_COUNT - 1))); do
     check "  SNS subscription" "not found or pending"
   fi
 
+  # 4c. Does the Lambda have an enabled SQS trigger (event source mapping)
+  # wired to this specific queue's ARN?
   if echo "${MAPPING_ARNS}" | grep -q "${QUEUE_ARN}"; then
     check "  Lambda SQS trigger enabled" "ok"
   else
@@ -149,6 +175,10 @@ for i in $(seq 0 $((QUEUE_COUNT - 1))); do
 done
 
 # 5. No legacy SNS→Lambda subscription
+# The architecture used to subscribe the Lambda directly to the SNS topic.
+# That direct subscription has since been replaced by SNS → SQS → Lambda,
+# so confirm no leftover direct subscription still exists (which would
+# cause duplicate Slack notifications).
 FUNCTION_ARN="$(aws lambda get-function \
   --function-name "${FUNCTION_NAME}" \
   --region "${AWS_REGION}" \
@@ -169,6 +199,8 @@ else
 fi
 
 echo ""
+# Final result: exit 0 only if every check above passed; otherwise exit 1
+# so CI (GitHub Actions) reports the deploy as failed/needing attention.
 if [[ "${FAILURES}" -eq 0 ]]; then
   echo "=== All checks passed ==="
   exit 0

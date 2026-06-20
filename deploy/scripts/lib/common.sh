@@ -73,7 +73,7 @@ validate_webhook_map_json() {
   [[ -z "${invalid}" ]]
 }
 
-# สร้าง WEBHOOK_MAP สำหรับ Lambda จาก webhookUrl ใน PROJECTS_CONFIG เท่านั้น
+# Build WEBHOOK_MAP for the Lambda using only webhookUrl from PROJECTS_CONFIG
 resolve_webhook_map() {
   local from_projects
   from_projects="$(build_webhook_map)"

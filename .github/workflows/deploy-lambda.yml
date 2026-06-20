@@ -1,5 +1,7 @@
 name: Deploy Lambda
 
+# Trigger: run on push to main when Lambda code or deploy scripts change,
+# or manually via workflow_dispatch.
 on:
   push:
     branches:
@@ -10,6 +12,8 @@ on:
       - .github/workflows/deploy-lambda.yml
   workflow_dispatch:
 
+# Prevent overlapping deploys on the same branch; cancel any in-progress run
+# if a newer one is triggered.
 concurrency:
   group: deploy-lambda-${{ github.ref }}
   cancel-in-progress: true
@@ -29,9 +33,12 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      # Step 1: Pull the repository contents (Lambda source + deploy scripts).
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      # Step 2: Authenticate to AWS using the access key/secret stored in
+      # GitHub Secrets, scoped to the configured region.
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -39,6 +46,10 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ secrets.AWS_REGION }}
 
+      # Step 3: Build deploy/config/projects.json, the per-project config
+      # (queue name, Slack webhook, filter policy) consumed by the deploy
+      # scripts. Prefers the PROJECTS_CONFIG GitHub Secret; falls back to a
+      # committed file, then to the example template as a last resort.
       - name: Prepare deploy configuration
         env:
           PROJECTS_CONFIG_JSON: ${{ secrets.PROJECTS_CONFIG }}
@@ -61,6 +72,7 @@ jobs:
 
           mkdir -p deploy/config
 
+          # Priority: GitHub Secret > committed file > example template
           if [[ -n "${PROJECTS_CONFIG_JSON}" ]]; then
             echo "Writing projects config from GitHub Secret PROJECTS_CONFIG"
             echo "${PROJECTS_CONFIG_JSON}" > deploy/config/projects.json
@@ -74,9 +86,14 @@ jobs:
             exit 1
           fi
 
+          # Sanity-check the resulting JSON before handing it to the deploy scripts
           jq empty deploy/config/projects.json
           echo "Projects configured: $(jq '.projects | length' deploy/config/projects.json)"
 
+      # Step 4: Run the full deploy orchestrator (deploy/scripts/deploy.sh),
+      # which in turn: ensures the IAM role, provisions SQS queues, wires up
+      # SNS→SQS subscriptions with filter policies, packages/deploys the
+      # Lambda function with its SQS triggers, and verifies the result.
       - name: Run full deploy
         env:
           AWS_REGION: ${{ secrets.AWS_REGION }}
@@ -93,6 +110,9 @@ jobs:
           chmod +x deploy/scripts/*.sh deploy/scripts/lib/*.sh 2>/dev/null || true
           bash deploy/scripts/deploy.sh
 
+      # Step 5: On success, write a human-readable summary (Lambda ARN, last
+      # modified time, SNS topic, and the list of configured project queues)
+      # to the GitHub Actions job summary page.
       - name: Deployment summary
         if: success()
         env:

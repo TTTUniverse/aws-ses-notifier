@@ -35,7 +35,7 @@ if ! validate_webhook_map_json "${WEBHOOK_MAP}"; then
   exit 1
 fi
 
-# แสดง channel ปลายทาง (ไม่โชว์ URL)
+# Show destination channels (do not display the URL)
 echo "Slack targets:"
 echo "${WEBHOOK_MAP}" | jq -r 'to_entries[] | "  \(.key) → \(.value.channel // "default channel") (\(.value.projectLabel // "no label"))"'
 
