@@ -68,7 +68,7 @@ else
     if [[ "${MAP_KEYS}" -gt 0 ]]; then
       check "WEBHOOK_MAP configured (${MAP_KEYS} queue(s))" "ok"
     else
-      check "WEBHOOK_MAP configured (${MAP_KEYS} queue(s))" "empty map — set WEBHOOK_MAP secret or webhookUrl in PROJECTS_CONFIG"
+      check "WEBHOOK_MAP configured (${MAP_KEYS} queue(s))" "empty map — add webhookUrl in PROJECTS_CONFIG"
     fi
   else
     check "WEBHOOK_MAP configured" "missing or empty"

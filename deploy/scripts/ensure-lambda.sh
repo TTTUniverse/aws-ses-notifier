@@ -26,10 +26,18 @@ echo "WEBHOOK_MAP keys: $(echo "${WEBHOOK_MAP}" | jq -r 'keys | join(", ")')"
 
 if [[ -z "${SLACK_WEBHOOK_URL:-}" && "${MAP_KEY_COUNT}" -eq 0 ]]; then
   echo "ERROR: No Slack webhook configured." >&2
-  echo "  Set GitHub Secret SLACK_WEBHOOK_URL and/or WEBHOOK_MAP" >&2
-  echo "  Or include webhookUrl in PROJECTS_CONFIG projects[]" >&2
+  echo "  Add webhookUrl in PROJECTS_CONFIG projects[] or set SLACK_WEBHOOK_URL as fallback" >&2
   exit 1
 fi
+
+if ! validate_webhook_map_json "${WEBHOOK_MAP}"; then
+  echo "ERROR: PROJECTS_CONFIG contains invalid webhookUrl values." >&2
+  exit 1
+fi
+
+# แสดง channel ปลายทาง (ไม่โชว์ URL)
+echo "Slack targets:"
+echo "${WEBHOOK_MAP}" | jq -r 'to_entries[] | "  \(.key) → \(.value.channel // "default channel") (\(.value.projectLabel // "no label"))"'
 
 if [[ -n "${SLACK_WEBHOOK_URL:-}" ]]; then
   echo "SLACK_WEBHOOK_URL: set"
@@ -59,28 +67,33 @@ fi
 
 wait_for_lambda "Code update"
 
-echo "Updating Lambda environment variables..."
-ENV_VARS="$(jq -n \
+echo "Updating Lambda configuration (env + timeout=${LAMBDA_TIMEOUT}s)..."
+CONFIG_FILE="$(mktemp)"
+jq -n \
   --arg slackUrl "${SLACK_WEBHOOK_URL:-}" \
   --arg slackChannel "${SLACK_CHANNEL:-}" \
   --arg webhookMap "${WEBHOOK_MAP}" \
   --arg logLevel "${LOG_LEVEL}" \
+  --argjson timeout "${LAMBDA_TIMEOUT}" \
+  --argjson memory "${LAMBDA_MEMORY}" \
   '{
-    Variables: {
-      SLACK_WEBHOOK_URL: $slackUrl,
-      SLACK_CHANNEL: $slackChannel,
-      WEBHOOK_MAP: $webhookMap,
-      LOG_LEVEL: $logLevel
+    Timeout: $timeout,
+    MemorySize: $memory,
+    Environment: {
+      Variables: {
+        SLACK_WEBHOOK_URL: $slackUrl,
+        SLACK_CHANNEL: $slackChannel,
+        WEBHOOK_MAP: $webhookMap,
+        LOG_LEVEL: $logLevel
+      }
     }
-  }')"
+  }' > "${CONFIG_FILE}"
 
-ENV_FILE="$(mktemp)"
-echo "${ENV_VARS}" > "${ENV_FILE}"
 aws lambda update-function-configuration \
   --function-name "${FUNCTION_NAME}" \
   --region "${AWS_REGION}" \
-  --environment "file://${ENV_FILE}" >/dev/null
-rm -f "${ENV_FILE}"
+  --cli-input-json "file://${CONFIG_FILE}" >/dev/null
+rm -f "${CONFIG_FILE}"
 
 wait_for_lambda "Configuration update"
 

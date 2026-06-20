@@ -87,7 +87,6 @@ jobs:
           LOG_LEVEL: ${{ env.LOG_LEVEL }}
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
           SLACK_CHANNEL: ${{ secrets.SLACK_CHANNEL }}
-          WEBHOOK_MAP: ${{ secrets.WEBHOOK_MAP }}
           LAMBDA_ROLE_ARN: ${{ secrets.LAMBDA_ROLE_ARN }}
           PROJECTS_CONFIG: deploy/config/projects.json
         run: |

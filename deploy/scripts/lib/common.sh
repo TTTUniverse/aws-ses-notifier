@@ -61,15 +61,33 @@ build_webhook_map() {
   ' "${PROJECTS_CONFIG}"
 }
 
-# ใช้ WEBHOOK_MAP จาก env/secret ก่อน ไม่มีค่อย build จาก projects.json
+validate_webhook_map_json() {
+  local map_json="$1"
+  local invalid
+  invalid="$(echo "${map_json}" | jq -r '
+    to_entries[]
+    | select(.value.webhookUrl == null or (.value.webhookUrl | length) < 60
+        or (.value.webhookUrl | test("\\.\\.\\.|/XXX/")))
+    | .key
+  ' 2>/dev/null || echo "invalid-json")"
+  [[ -z "${invalid}" ]]
+}
+
+# สร้าง WEBHOOK_MAP สำหรับ Lambda จาก webhookUrl ใน PROJECTS_CONFIG เท่านั้น
 resolve_webhook_map() {
-  if [[ -n "${WEBHOOK_MAP:-}" ]]; then
-    echo "Using WEBHOOK_MAP from environment (GitHub Secret or .env)" >&2
-    echo "${WEBHOOK_MAP}" | jq -c .
-    return
-  fi
+  local from_projects
+  from_projects="$(build_webhook_map)"
+
   echo "Building WEBHOOK_MAP from ${PROJECTS_CONFIG}" >&2
-  build_webhook_map
+
+  if ! validate_webhook_map_json "${from_projects}"; then
+    echo "ERROR: No valid Slack webhook URLs in PROJECTS_CONFIG." >&2
+    echo "  Add webhookUrl per project in PROJECTS_CONFIG (GitHub Secret or deploy/config/projects.json)" >&2
+    echo "  URLs must be full https://hooks.slack.com/services/T.../B.../..." >&2
+    echo "  Do NOT use placeholders like https://hooks.slack.com/services/..." >&2
+    return 1
+  fi
+  echo "${from_projects}"
 }
 
 wait_for_lambda() {
