@@ -76,10 +76,10 @@ else
 fi
 
 # 3. SNS topic
-if aws sns get-topic-attributes --topic-arn "${SNS_TOPIC_ARN}" --region "${AWS_REGION}" >/dev/null 2>&1; then
+if aws sns list-subscriptions-by-topic --topic-arn "${SNS_TOPIC_ARN}" --region "${AWS_REGION}" >/dev/null 2>&1; then
   check "SNS topic ${SNS_TOPIC_NAME}" "ok"
 else
-  check "SNS topic ${SNS_TOPIC_NAME}" "not found"
+  check "SNS topic ${SNS_TOPIC_NAME}" "not found or access denied"
 fi
 
 # 4. Per-project: SQS queue, SNS subscription, Lambda trigger

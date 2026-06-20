@@ -13,11 +13,12 @@
         "lambda:DeleteEventSourceMapping",
         "lambda:GetEventSourceMapping",
         "lambda:ListEventSourceMappings",
+        "lambda:UpdateEventSourceMapping",
         "lambda:AddPermission",
         "lambda:RemovePermission",
         "lambda:GetPolicy"
       ],
-      "Resource": "arn:aws:lambda:*:${AWS_ACCOUNT_ID}:function:ses-bounce-slack-notifier"
+      "Resource": "arn:aws:lambda:us-east-1:183248602306:function:ses-bounce-slack-notifier"
     },
     {
       "Sid": "LambdaEventSourceMapping",
@@ -42,24 +43,23 @@
         "sqs:TagQueue",
         "sqs:ListQueueTags"
       ],
-      "Resource": "arn:aws:sqs:*:${AWS_ACCOUNT_ID}:ses-*"
+      "Resource": "arn:aws:sqs:us-east-1:183248602306:ses-*"
     },
     {
-      "Sid": "SnsTopicRead",
+      "Sid": "SnsTopicManage",
       "Effect": "Allow",
       "Action": [
         "sns:GetTopicAttributes",
-        "sns:ListTopics",
         "sns:ListSubscriptionsByTopic",
         "sns:Subscribe",
         "sns:Unsubscribe",
         "sns:SetSubscriptionAttributes",
         "sns:GetSubscriptionAttributes"
       ],
-      "Resource": "arn:aws:sns:*:${AWS_ACCOUNT_ID}:ses-reputation-alerts"
+      "Resource": "arn:aws:sns:us-east-1:183248602306:ses-reputation-alerts"
     },
     {
-      "Sid": "LambdaExecutionRole",
+      "Sid": "LambdaExecutionRoleCreate",
       "Effect": "Allow",
       "Action": [
         "iam:CreateRole",
@@ -69,16 +69,24 @@
         "iam:TagRole",
         "iam:UpdateAssumeRolePolicy"
       ],
-      "Resource": "arn:aws:iam::${AWS_ACCOUNT_ID}:role/ses-bounce-slack-notifier-role"
+      "Resource": "arn:aws:iam::183248602306:role/ses-bounce-slack-notifier-role"
     },
     {
-      "Sid": "IamPassRoleForLambda",
+      "Sid": "PassRoleNewLambdaRole",
       "Effect": "Allow",
       "Action": "iam:PassRole",
-      "Resource": [
-        "arn:aws:iam::${AWS_ACCOUNT_ID}:role/ses-bounce-slack-notifier-role",
-        "arn:aws:iam::${AWS_ACCOUNT_ID}:role/service-role/ses-bounce-slack-notifier-role-ezuv100o"
-      ],
+      "Resource": "arn:aws:iam::183248602306:role/ses-bounce-slack-notifier-role",
+      "Condition": {
+        "StringEquals": {
+          "iam:PassedToService": "lambda.amazonaws.com"
+        }
+      }
+    },
+    {
+      "Sid": "PassRoleExistingLambdaRole",
+      "Effect": "Allow",
+      "Action": "iam:PassRole",
+      "Resource": "arn:aws:iam::183248602306:role/service-role/ses-bounce-slack-notifier-role-ezuv100o",
       "Condition": {
         "StringEquals": {
           "iam:PassedToService": "lambda.amazonaws.com"

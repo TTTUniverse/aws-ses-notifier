@@ -92,3 +92,34 @@ get_queue_url() {
   aws sqs get-queue-url --queue-name "${queue_name}" --region "${AWS_REGION}" \
     --query 'QueueUrl' --output text
 }
+
+# Verify SNS topic is reachable (uses ListSubscriptionsByTopic — included in minimal deploy policy)
+verify_sns_topic() {
+  local err_file
+  err_file="$(mktemp)"
+  if aws sns list-subscriptions-by-topic \
+    --topic-arn "${SNS_TOPIC_ARN}" \
+    --region "${AWS_REGION}" \
+    2>"${err_file}" >/dev/null; then
+    rm -f "${err_file}"
+    return 0
+  fi
+
+  local err
+  err="$(cat "${err_file}")"
+  rm -f "${err_file}"
+
+  if echo "${err}" | grep -qiE "AccessDenied|AuthorizationError|not authorized"; then
+    echo "ERROR: Access denied reading SNS topic '${SNS_TOPIC_NAME}'" >&2
+    echo "  ARN: ${SNS_TOPIC_ARN}" >&2
+    echo "  Add sns:ListSubscriptionsByTopic (and related SNS actions) to deploy user IAM policy." >&2
+    echo "  Copy full policy from: deploy/iam/github-actions-deploy-policy.json" >&2
+  elif echo "${err}" | grep -qiE "NotFound|does not exist"; then
+    echo "ERROR: SNS topic '${SNS_TOPIC_NAME}' not found in region ${AWS_REGION}" >&2
+    echo "  ARN: ${SNS_TOPIC_ARN}" >&2
+  else
+    echo "ERROR: Failed to verify SNS topic '${SNS_TOPIC_NAME}'" >&2
+    echo "  ${err}" >&2
+  fi
+  return 1
+}
