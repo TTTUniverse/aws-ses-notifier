@@ -61,6 +61,17 @@ build_webhook_map() {
   ' "${PROJECTS_CONFIG}"
 }
 
+# ใช้ WEBHOOK_MAP จาก env/secret ก่อน ไม่มีค่อย build จาก projects.json
+resolve_webhook_map() {
+  if [[ -n "${WEBHOOK_MAP:-}" ]]; then
+    echo "Using WEBHOOK_MAP from environment (GitHub Secret or .env)" >&2
+    echo "${WEBHOOK_MAP}" | jq -c .
+    return
+  fi
+  echo "Building WEBHOOK_MAP from ${PROJECTS_CONFIG}" >&2
+  build_webhook_map
+}
+
 wait_for_lambda() {
   local label="${1:-Lambda update}"
   for i in $(seq 1 24); do

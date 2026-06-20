@@ -20,8 +20,22 @@ fi
 echo "Packaging Lambda from ${LAMBDA_SRC}..."
 (cd "${LAMBDA_SRC}" && zip -q function.zip index.mjs)
 
-WEBHOOK_MAP="$(build_webhook_map)"
+WEBHOOK_MAP="$(resolve_webhook_map)"
+MAP_KEY_COUNT="$(echo "${WEBHOOK_MAP}" | jq 'keys | length')"
 echo "WEBHOOK_MAP keys: $(echo "${WEBHOOK_MAP}" | jq -r 'keys | join(", ")')"
+
+if [[ -z "${SLACK_WEBHOOK_URL:-}" && "${MAP_KEY_COUNT}" -eq 0 ]]; then
+  echo "ERROR: No Slack webhook configured." >&2
+  echo "  Set GitHub Secret SLACK_WEBHOOK_URL and/or WEBHOOK_MAP" >&2
+  echo "  Or include webhookUrl in PROJECTS_CONFIG projects[]" >&2
+  exit 1
+fi
+
+if [[ -n "${SLACK_WEBHOOK_URL:-}" ]]; then
+  echo "SLACK_WEBHOOK_URL: set"
+else
+  echo "SLACK_WEBHOOK_URL: not set (using WEBHOOK_MAP per queue only)"
+fi
 
 if aws lambda get-function --function-name "${FUNCTION_NAME}" --region "${AWS_REGION}" >/dev/null 2>&1; then
   echo "Updating Lambda code: ${FUNCTION_NAME}"

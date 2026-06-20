@@ -49,30 +49,35 @@ else
   echo "   Runtime: ${RUNTIME}, Timeout: ${TIMEOUT}s"
 fi
 
-# 2. Lambda env vars
-ENV_WEBHOOK_MAP="$(aws lambda get-function-configuration \
+# 2. Lambda env vars (ใช้ --output json เพราะ --output text อ่าน JSON env var ผิดพลาดได้)
+LAMBDA_ENV="$(aws lambda get-function-configuration \
   --function-name "${FUNCTION_NAME}" \
   --region "${AWS_REGION}" \
-  --query 'Environment.Variables.WEBHOOK_MAP' \
-  --output text 2>/dev/null || echo "")"
+  --query 'Environment.Variables' \
+  --output json 2>/dev/null || echo '{}')"
 
-if [[ -n "${ENV_WEBHOOK_MAP}" && "${ENV_WEBHOOK_MAP}" != "None" ]]; then
-  MAP_KEYS="$(echo "${ENV_WEBHOOK_MAP}" | jq -r 'keys | length' 2>/dev/null || echo 0)"
-  check "WEBHOOK_MAP configured (${MAP_KEYS} queue(s))" "ok"
+ENV_WEBHOOK_MAP="$(echo "${LAMBDA_ENV}" | jq -r '.WEBHOOK_MAP // empty')"
+SLACK_URL_SET="$(echo "${LAMBDA_ENV}" | jq -r '.SLACK_WEBHOOK_URL // empty')"
+
+if [[ -n "${ENV_WEBHOOK_MAP}" ]]; then
+  MAP_KEYS="$(echo "${ENV_WEBHOOK_MAP}" | jq 'keys | length' 2>/dev/null || echo 0)"
+  if [[ "${MAP_KEYS}" -gt 0 ]]; then
+    check "WEBHOOK_MAP configured (${MAP_KEYS} queue(s))" "ok"
+  else
+    check "WEBHOOK_MAP configured (${MAP_KEYS} queue(s))" "empty map — set WEBHOOK_MAP secret or webhookUrl in PROJECTS_CONFIG"
+  fi
 else
   check "WEBHOOK_MAP configured" "missing or empty"
 fi
 
-SLACK_URL_SET="$(aws lambda get-function-configuration \
-  --function-name "${FUNCTION_NAME}" \
-  --region "${AWS_REGION}" \
-  --query 'Environment.Variables.SLACK_WEBHOOK_URL' \
-  --output text 2>/dev/null || echo "")"
-
-if [[ -n "${SLACK_URL_SET}" && "${SLACK_URL_SET}" != "None" ]]; then
+if [[ -n "${SLACK_URL_SET}" ]]; then
   check "SLACK_WEBHOOK_URL (fallback) set" "ok"
 else
-  check "SLACK_WEBHOOK_URL (fallback) set" "missing — Lambda will fail without queue mapping"
+  if [[ "${MAP_KEYS:-0}" -gt 0 ]]; then
+    check "SLACK_WEBHOOK_URL (fallback) set" "ok (optional — WEBHOOK_MAP has entries)"
+  else
+    check "SLACK_WEBHOOK_URL (fallback) set" "missing — Lambda will fail without queue mapping"
+  fi
 fi
 
 # 3. SNS topic
