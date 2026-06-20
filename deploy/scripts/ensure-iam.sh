@@ -20,10 +20,15 @@ if aws iam get-role --role-name "${LAMBDA_ROLE_NAME}" >/dev/null 2>&1; then
   echo "Lambda role already exists: ${ROLE_ARN}"
 else
   echo "Creating Lambda execution role: ${LAMBDA_ROLE_NAME}"
-  aws iam create-role \
+  if ! aws iam create-role \
     --role-name "${LAMBDA_ROLE_NAME}" \
     --assume-role-policy-document "file://${DEPLOY_DIR}/iam/lambda-trust-policy.json" \
-    --description "Execution role for ${FUNCTION_NAME} (SQS trigger + CloudWatch Logs)"
+    --description "Execution role for ${FUNCTION_NAME} (SQS trigger + CloudWatch Logs)"; then
+    echo "ERROR: Failed to create IAM role '${LAMBDA_ROLE_NAME}'." >&2
+    echo "  - Ensure deploy user has iam:CreateRole (see deploy/iam/github-actions-deploy-policy.json)" >&2
+    echo "  - Or set LAMBDA_ROLE_ARN to an existing role and rerun." >&2
+    exit 1
+  fi
 
   echo "Waiting for role to propagate..."
   sleep 10

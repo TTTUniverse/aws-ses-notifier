@@ -59,6 +59,19 @@
       "Resource": "arn:aws:sns:*:${AWS_ACCOUNT_ID}:ses-notification-topic"
     },
     {
+      "Sid": "LambdaExecutionRole",
+      "Effect": "Allow",
+      "Action": [
+        "iam:CreateRole",
+        "iam:GetRole",
+        "iam:PutRolePolicy",
+        "iam:GetRolePolicy",
+        "iam:TagRole",
+        "iam:UpdateAssumeRolePolicy"
+      ],
+      "Resource": "arn:aws:iam::${AWS_ACCOUNT_ID}:role/ses-bounce-slack-notifier-role"
+    },
+    {
       "Sid": "IamPassRoleForLambda",
       "Effect": "Allow",
       "Action": "iam:PassRole",
