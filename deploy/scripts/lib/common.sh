@@ -2,7 +2,8 @@
 # Shared helpers for deploy scripts
 set -euo pipefail
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+# common.sh lives at deploy/scripts/lib/ — repo root is three levels up
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 DEPLOY_DIR="${ROOT_DIR}/deploy"
 
 load_env() {
