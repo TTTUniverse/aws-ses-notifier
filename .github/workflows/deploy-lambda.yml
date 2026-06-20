@@ -81,6 +81,10 @@ jobs:
         env:
           AWS_REGION: ${{ secrets.AWS_REGION }}
           AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
+          FUNCTION_NAME: ${{ env.FUNCTION_NAME }}
+          SNS_TOPIC_NAME: ${{ env.SNS_TOPIC_NAME }}
+          LAMBDA_ROLE_NAME: ${{ env.LAMBDA_ROLE_NAME }}
+          LOG_LEVEL: ${{ env.LOG_LEVEL }}
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
           SLACK_CHANNEL: ${{ secrets.SLACK_CHANNEL }}
           LAMBDA_ROLE_ARN: ${{ secrets.LAMBDA_ROLE_ARN }}

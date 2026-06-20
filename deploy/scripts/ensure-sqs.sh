@@ -10,13 +10,34 @@ load_env
 resolve_projects_config
 
 echo "SNS Topic ARN: ${SNS_TOPIC_ARN}"
+echo "AWS Region: ${AWS_REGION}"
 
-# Verify SNS topic exists
-if ! aws sns get-topic-attributes --topic-arn "${SNS_TOPIC_ARN}" --region "${AWS_REGION}" >/dev/null 2>&1; then
-  echo "ERROR: SNS topic '${SNS_TOPIC_NAME}' not found at ${SNS_TOPIC_ARN}" >&2
-  echo "Create the topic first and wire SES bounce/complaint notifications to it." >&2
+# Verify SNS topic exists (and deploy user has permission)
+SNS_CHECK_ERR="$(mktemp)"
+if ! aws sns get-topic-attributes \
+  --topic-arn "${SNS_TOPIC_ARN}" \
+  --region "${AWS_REGION}" \
+  2>"${SNS_CHECK_ERR}" >/dev/null; then
+  SNS_ERR="$(cat "${SNS_CHECK_ERR}")"
+  rm -f "${SNS_CHECK_ERR}"
+
+  if echo "${SNS_ERR}" | grep -qi "AccessDenied"; then
+    echo "ERROR: Access denied reading SNS topic '${SNS_TOPIC_NAME}'" >&2
+    echo "  ARN: ${SNS_TOPIC_ARN}" >&2
+    echo "  Deploy user needs sns:GetTopicAttributes (and sns:SetSubscriptionAttributes) on this topic." >&2
+    echo "  Update IAM inline policy — see deploy/iam/github-actions-deploy-policy.json" >&2
+  elif echo "${SNS_ERR}" | grep -qi "NotFound"; then
+    echo "ERROR: SNS topic '${SNS_TOPIC_NAME}' not found in region ${AWS_REGION}" >&2
+    echo "  ARN: ${SNS_TOPIC_ARN}" >&2
+    echo "  Create the topic or fix SNS_TOPIC_NAME / AWS_REGION." >&2
+  else
+    echo "ERROR: Failed to verify SNS topic '${SNS_TOPIC_NAME}'" >&2
+    echo "  ${SNS_ERR}" >&2
+  fi
   exit 1
 fi
+rm -f "${SNS_CHECK_ERR}"
+echo "SNS topic verified: ${SNS_TOPIC_NAME}"
 
 QUEUE_COUNT="$(jq '.projects | length' "${PROJECTS_CONFIG}")"
 echo "Provisioning ${QUEUE_COUNT} SQS queue(s)..."

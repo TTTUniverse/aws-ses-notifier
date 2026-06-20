@@ -75,7 +75,10 @@
       "Sid": "IamPassRoleForLambda",
       "Effect": "Allow",
       "Action": "iam:PassRole",
-      "Resource": "arn:aws:iam::${AWS_ACCOUNT_ID}:role/ses-bounce-slack-notifier-role",
+      "Resource": [
+        "arn:aws:iam::${AWS_ACCOUNT_ID}:role/ses-bounce-slack-notifier-role",
+        "arn:aws:iam::${AWS_ACCOUNT_ID}:role/service-role/ses-bounce-slack-notifier-role-ezuv100o"
+      ],
       "Condition": {
         "StringEquals": {
           "iam:PassedToService": "lambda.amazonaws.com"
