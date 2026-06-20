@@ -76,12 +76,11 @@ else
 
   if [[ -n "${SLACK_URL_SET}" ]]; then
     check "SLACK_WEBHOOK_URL (fallback) set" "ok"
+  elif [[ "${MAP_KEYS:-0}" -gt 0 ]]; then
+    check "SLACK_WEBHOOK_URL (fallback) not set" "ok"
+    echo "   optional — WEBHOOK_MAP has ${MAP_KEYS} queue(s)"
   else
-    if [[ "${MAP_KEYS:-0}" -gt 0 ]]; then
-      check "SLACK_WEBHOOK_URL (fallback) set" "ok (optional — WEBHOOK_MAP has entries)"
-    else
-      check "SLACK_WEBHOOK_URL (fallback) set" "missing — Lambda will fail without queue mapping"
-    fi
+    check "SLACK_WEBHOOK_URL (fallback) set" "missing — set webhookUrl in PROJECTS_CONFIG or SLACK_WEBHOOK_URL"
   fi
 fi
 
