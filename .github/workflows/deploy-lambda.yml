@@ -6,6 +6,8 @@ on:
       - main
     paths:
       - lambda/ses-bounce-slack-notifier/index.mjs
+      - deploy/**
+      - .github/workflows/deploy-lambda.yml
   workflow_dispatch:
 
 concurrency:
@@ -17,12 +19,9 @@ permissions:
 
 env:
   FUNCTION_NAME: ses-bounce-slack-notifier
-  RUNTIME: nodejs22.x
-  HANDLER: index.handler
-  MEMORY: 128
-  TIMEOUT: 3
-  ROLE_ARN: arn:aws:iam::183248602306:role/service-role/ses-bounce-slack-notifier-role-ezuv100o
-  SNS_TOPIC_ARN: arn:aws:sns:us-east-1:183248602306:ses-reputation-alerts
+  SNS_TOPIC_NAME: ses-notification-topic
+  LAMBDA_ROLE_NAME: ses-bounce-slack-notifier-role
+  LOG_LEVEL: info
 
 jobs:
   deploy:
@@ -40,75 +39,61 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ secrets.AWS_REGION }}
 
-      - name: Package Lambda function
-        working-directory: lambda/ses-bounce-slack-notifier
-        run: zip function.zip index.mjs
-
-      - name: Create or update Lambda function
-        working-directory: lambda/ses-bounce-slack-notifier
+      - name: Prepare deploy configuration
+        env:
+          PROJECTS_CONFIG_JSON: ${{ secrets.PROJECTS_CONFIG }}
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          SLACK_CHANNEL: ${{ secrets.SLACK_CHANNEL }}
+          LAMBDA_ROLE_ARN: ${{ secrets.LAMBDA_ROLE_ARN }}
         run: |
-          if aws lambda get-function --function-name ${{ env.FUNCTION_NAME }} --region ${{ secrets.AWS_REGION }} > /dev/null 2>&1; then
-            echo "Function exists — updating code"
-            aws lambda update-function-code \
-              --function-name ${{ env.FUNCTION_NAME }} \
-              --zip-file fileb://function.zip \
-              --region ${{ secrets.AWS_REGION }}
+          set -euo pipefail
+
+          # AWS / Lambda settings (secrets override defaults from deploy/.env.example)
+          export AWS_REGION="${{ secrets.AWS_REGION }}"
+          export AWS_ACCOUNT_ID="${{ secrets.AWS_ACCOUNT_ID }}"
+          export FUNCTION_NAME="${{ env.FUNCTION_NAME }}"
+          export SNS_TOPIC_NAME="${{ env.SNS_TOPIC_NAME }}"
+          export LAMBDA_ROLE_NAME="${{ env.LAMBDA_ROLE_NAME }}"
+          export LOG_LEVEL="${{ env.LOG_LEVEL }}"
+          export SLACK_WEBHOOK_URL="${SLACK_WEBHOOK_URL:-}"
+          export SLACK_CHANNEL="${SLACK_CHANNEL:-}"
+          export LAMBDA_ROLE_ARN="${LAMBDA_ROLE_ARN:-}"
+
+          mkdir -p deploy/config
+
+          if [[ -n "${PROJECTS_CONFIG_JSON}" ]]; then
+            echo "Writing projects config from GitHub Secret PROJECTS_CONFIG"
+            echo "${PROJECTS_CONFIG_JSON}" > deploy/config/projects.json
+          elif [[ -f deploy/config/projects.json ]]; then
+            echo "Using committed deploy/config/projects.json"
+          elif [[ -f deploy/config/projects.example.json ]]; then
+            echo "WARNING: Using projects.example.json — set PROJECTS_CONFIG secret for production"
+            cp deploy/config/projects.example.json deploy/config/projects.json
           else
-            echo "Function not found — creating"
-            FUNCTION_ARN=$(aws lambda create-function \
-              --function-name ${{ env.FUNCTION_NAME }} \
-              --runtime ${{ env.RUNTIME }} \
-              --handler ${{ env.HANDLER }} \
-              --memory-size ${{ env.MEMORY }} \
-              --timeout ${{ env.TIMEOUT }} \
-              --role ${{ env.ROLE_ARN }} \
-              --zip-file fileb://function.zip \
-              --region ${{ secrets.AWS_REGION }} \
-              --query 'FunctionArn' \
-              --output text)
-            echo "Created function: $FUNCTION_ARN"
-            echo "FUNCTION_ARN=$FUNCTION_ARN" >> $GITHUB_ENV
-            echo "FUNCTION_CREATED=true" >> $GITHUB_ENV
+            echo "ERROR: No projects config found"
+            exit 1
           fi
 
-      - name: Wait for Lambda to be ready
-        run: |
-          for i in $(seq 1 12); do
-            STATE=$(aws lambda get-function \
-              --function-name ${{ env.FUNCTION_NAME }} \
-              --region ${{ secrets.AWS_REGION }} \
-              --query 'Configuration.LastUpdateStatus' \
-              --output text)
-            echo "[$i/12] LastUpdateStatus: $STATE"
-            [ "$STATE" = "Successful" ] && exit 0
-            [ "$STATE" = "Failed" ]     && { echo "Lambda update failed"; exit 1; }
-            sleep 5
-          done
-          echo "Timed out"; exit 1
+          jq empty deploy/config/projects.json
+          echo "Projects configured: $(jq '.projects | length' deploy/config/projects.json)"
 
-      - name: Update Lambda environment variables
+      - name: Run full deploy
+        env:
+          AWS_REGION: ${{ secrets.AWS_REGION }}
+          AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          SLACK_CHANNEL: ${{ secrets.SLACK_CHANNEL }}
+          LAMBDA_ROLE_ARN: ${{ secrets.LAMBDA_ROLE_ARN }}
+          PROJECTS_CONFIG: deploy/config/projects.json
         run: |
-          aws lambda update-function-configuration \
-            --function-name ${{ env.FUNCTION_NAME }} \
-            --region ${{ secrets.AWS_REGION }} \
-            --environment "Variables={SLACK_WEBHOOK_URL=${{ secrets.SLACK_WEBHOOK_URL }}}"
+          chmod +x deploy/scripts/*.sh deploy/scripts/lib/*.sh 2>/dev/null || true
+          bash deploy/scripts/deploy.sh
 
-      - name: Wait for Lambda to be ready
-        run: |
-          for i in $(seq 1 12); do
-            STATE=$(aws lambda get-function \
-              --function-name ${{ env.FUNCTION_NAME }} \
-              --region ${{ secrets.AWS_REGION }} \
-              --query 'Configuration.LastUpdateStatus' \
-              --output text)
-            echo "[$i/12] LastUpdateStatus: $STATE"
-            [ "$STATE" = "Successful" ] && exit 0
-            [ "$STATE" = "Failed" ]     && { echo "Lambda update failed"; exit 1; }
-            sleep 5
-          done
-          echo "Timed out"; exit 1
-
-      - name: Ensure SNS trigger is configured
+      - name: Deployment summary
+        if: success()
+        env:
+          AWS_REGION: ${{ secrets.AWS_REGION }}
+          PROJECTS_CONFIG: deploy/config/projects.json
         run: |
           FUNCTION_ARN=$(aws lambda get-function \
             --function-name ${{ env.FUNCTION_NAME }} \
@@ -116,34 +101,21 @@ jobs:
             --query 'Configuration.FunctionArn' \
             --output text)
 
-          # Add resource-based permission (idempotent — remove first if exists)
-          aws lambda remove-permission \
+          LAST_MODIFIED=$(aws lambda get-function \
             --function-name ${{ env.FUNCTION_NAME }} \
-            --statement-id sns-invoke \
-            --region ${{ secrets.AWS_REGION }} 2>/dev/null || true
-
-          aws lambda add-permission \
-            --function-name ${{ env.FUNCTION_NAME }} \
-            --statement-id sns-invoke \
-            --action lambda:InvokeFunction \
-            --principal sns.amazonaws.com \
-            --source-arn ${{ env.SNS_TOPIC_ARN }} \
-            --region ${{ secrets.AWS_REGION }}
-
-          # Subscribe SNS topic if not already subscribed
-          EXISTING=$(aws sns list-subscriptions-by-topic \
-            --topic-arn ${{ env.SNS_TOPIC_ARN }} \
             --region ${{ secrets.AWS_REGION }} \
-            --query "Subscriptions[?Protocol=='lambda' && Endpoint=='$FUNCTION_ARN'].SubscriptionArn" \
+            --query 'Configuration.LastModified' \
             --output text)
 
-          if [ -z "$EXISTING" ]; then
-            echo "Adding SNS subscription"
-            aws sns subscribe \
-              --topic-arn ${{ env.SNS_TOPIC_ARN }} \
-              --protocol lambda \
-              --notification-endpoint $FUNCTION_ARN \
-              --region ${{ secrets.AWS_REGION }}
-          else
-            echo "SNS subscription already exists: $EXISTING"
-          fi
+          echo "## Deployment Summary" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Item | Value |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|---|---|" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Lambda | \`${FUNCTION_ARN}\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Last Modified | ${LAST_MODIFIED} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| SNS Topic | \`${{ env.SNS_TOPIC_NAME }}\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Projects | $(jq '.projects | length' deploy/config/projects.json) |" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "### Queues" >> "$GITHUB_STEP_SUMMARY"
+          jq -r '.projects[] | "- `\(.queueName)` → \(.projectLabel) → `\(.channel // "default")`"' \
+            deploy/config/projects.json >> "$GITHUB_STEP_SUMMARY"

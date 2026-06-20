@@ -12,8 +12,9 @@
  *                         └─► Slack Incoming Webhook
  *
  * Environment variables:
- *   SLACK_WEBHOOK_URL  — Slack Incoming Webhook URL (required)
+ *   SLACK_WEBHOOK_URL  — Slack Incoming Webhook URL (required, fallback)
  *   SLACK_CHANNEL      — override channel, e.g. #ses-alerts (optional)
+ *   WEBHOOK_MAP        — JSON mapping queue -> { webhookUrl, channel, projectLabel } (optional)
  *   LOG_LEVEL          — "debug" | "info" (default: "info")
  */
 
@@ -61,6 +62,17 @@
 const SLACK_WEBHOOK_URL = process.env.SLACK_WEBHOOK_URL;
 const SLACK_CHANNEL = process.env.SLACK_CHANNEL;
 const LOG_LEVEL = process.env.LOG_LEVEL ?? "info";
+const RAW_WEBHOOK_MAP = process.env.WEBHOOK_MAP ?? process.env.SLACK_WEBHOOK_MAP;
+
+/** @type {Record<string, { webhookUrl?: string, channel?: string, projectLabel?: string }>} */
+const WEBHOOK_MAP = (() => {
+  if (!RAW_WEBHOOK_MAP) return {};
+  try {
+    return JSON.parse(RAW_WEBHOOK_MAP);
+  } catch {
+    return {};
+  }
+})();
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -105,16 +117,17 @@ function formatThaiTime(isoString) {
  * ส่ง message ไปยัง Slack Incoming Webhook
  * @param {object} payload
  */
-async function sendToSlack(payload) {
-  if (!SLACK_WEBHOOK_URL) {
-    throw new Error("SLACK_WEBHOOK_URL environment variable is not set");
+async function sendToSlack(payload, { webhookUrl, channel }) {
+  const targetWebhook = webhookUrl ?? SLACK_WEBHOOK_URL;
+  if (!targetWebhook) {
+    throw new Error("Slack webhook URL is not configured");
   }
 
-  const body = SLACK_CHANNEL
-    ? { ...payload, channel: SLACK_CHANNEL }
+  const body = channel
+    ? { ...payload, channel }
     : payload;
 
-  const response = await fetch(SLACK_WEBHOOK_URL, {
+  const response = await fetch(targetWebhook, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
@@ -128,6 +141,60 @@ async function sendToSlack(payload) {
   log("debug", "Slack message sent", { status: response.status });
 }
 
+/**
+ * ดึงชื่อ Queue จาก eventSourceARN
+ * @param {{ eventSourceARN?: string }} record
+ */
+function getQueueName(record) {
+  const arn = record?.eventSourceARN ?? "";
+  const arnTail = arn.split(":").pop();
+  if (!arnTail) return undefined;
+  const parts = arnTail.split("/");
+  return parts[parts.length - 1];
+}
+
+/**
+ * เลือก Slack target ตาม Queue (fallback ไป global)
+ * @param {string | undefined} queueName
+ */
+function resolveSlackTarget(queueName) {
+  const entry = queueName ? WEBHOOK_MAP[queueName] : undefined;
+  return {
+    webhookUrl: entry?.webhookUrl ?? SLACK_WEBHOOK_URL,
+    channel: entry?.channel ?? SLACK_CHANNEL,
+    projectLabel: entry?.projectLabel ?? queueName ?? "unknown-project",
+  };
+}
+
+/**
+ * รองรับทั้ง SQS event (wrapped SNS) และ SNS event ตรง (กรณีเผื่อ trigger จาก SNS)
+ * @param {{ body?: string, Sns?: { Message?: string } }} record
+ * @returns {object | string | undefined}
+ */
+function extractSnsMessage(record) {
+  if (!record) return undefined;
+
+  // กรณี SNS → Lambda ตรง
+  if (record.Sns?.Message) {
+    return record.Sns.Message;
+  }
+
+  // กรณี SQS → Lambda (SNS envelope)
+  if (record.body) {
+    try {
+      const parsed = JSON.parse(record.body);
+      // ถ้าเป็น SNS envelope
+      if (parsed?.Message) return parsed.Message;
+      // ถ้าเป็น payload ตรง (เช่นส่ง raw SES notification)
+      return parsed;
+    } catch {
+      return undefined;
+    }
+  }
+
+  return undefined;
+}
+
 // ---------------------------------------------------------------------------
 // Message builders
 // ---------------------------------------------------------------------------
@@ -135,8 +202,9 @@ async function sendToSlack(payload) {
 /**
  * สร้าง Slack Block Kit message สำหรับ bounce event
  * @param {SesNotification} notification
+ * @param {{ projectLabel: string, queueName?: string }} meta
  */
-function buildBounceMessage(notification) {
+function buildBounceMessage(notification, meta) {
   const { bounce, mail } = notification;
   const isHardBounce = bounce.bounceType === "Permanent";
   const emoji = isHardBounce ? "🔴" : "🟡";
@@ -165,6 +233,19 @@ function buildBounceMessage(notification) {
         },
       },
       {
+        type: "context",
+        elements: [
+          {
+            type: "mrkdwn",
+            text: `Project: ${meta.projectLabel}`,
+          },
+          {
+            type: "mrkdwn",
+            text: `Queue: ${meta.queueName ?? "unknown"}`,
+          },
+        ],
+      },
+      {
         type: "section",
         fields: [
           {
@@ -173,7 +254,7 @@ function buildBounceMessage(notification) {
           },
           {
             type: "mrkdwn",
-            text: `*Time (TH)*\n${formatTime(bounce.timestamp)}`,
+            text: `*Time (TH)*\n${formatThaiTime(bounce.timestamp)}`,
           },
           {
             type: "mrkdwn",
@@ -208,8 +289,9 @@ function buildBounceMessage(notification) {
 /**
  * สร้าง Slack Block Kit message สำหรับ complaint event
  * @param {SesNotification} notification
+ * @param {{ projectLabel: string, queueName?: string }} meta
  */
-function buildComplaintMessage(notification) {
+function buildComplaintMessage(notification, meta) {
   const { complaint, mail } = notification;
 
   const recipientLines = complaint.complainedRecipients
@@ -228,6 +310,19 @@ function buildComplaintMessage(notification) {
           text: "🚨 SES Complaint (Spam Report) Detected",
           emoji: true,
         },
+      },
+      {
+        type: "context",
+        elements: [
+          {
+            type: "mrkdwn",
+            text: `Project: ${meta.projectLabel}`,
+          },
+          {
+            type: "mrkdwn",
+            text: `Queue: ${meta.queueName ?? "unknown"}`,
+          },
+        ],
       },
       {
         type: "section",
@@ -275,54 +370,79 @@ function buildComplaintMessage(notification) {
 // ---------------------------------------------------------------------------
 
 /**
- * @param {{ Records: Array<{ Sns: { Message: string, Subject?: string } }> }} event
+ * @param {{
+ *   Records: Array<{
+ *     body: string,
+ *     eventSourceARN?: string
+ *   }>
+ * }} event
  */
 export async function handler(event) {
-  log("debug", "Received event", event);
+  log("debug", "Received event", { records: event?.Records?.length ?? 0 });
 
   const errors = [];
 
-  for (const record of event.Records) {
+  for (const record of event.Records ?? []) {
     try {
-      const snsMessage = record.Sns.Message;
-      log("debug", "Processing SNS message", { snsMessage });
+      const queueName = getQueueName(record);
+      const slackTarget = resolveSlackTarget(queueName);
+
+      const snsMessage = extractSnsMessage(record);
+      if (!snsMessage) {
+        log("info", "Skipping record without SNS message", {
+          queueName,
+          bodySample: record.body?.slice(0, 200),
+        });
+        continue;
+      }
+      log("debug", "Processing SNS message from SQS", {
+        queueName,
+        hasMessage: Boolean(snsMessage),
+      });
 
       /** @type {SesNotification} */
       let notification;
       try {
-        notification = JSON.parse(snsMessage);
+        notification =
+          typeof snsMessage === "string" ? JSON.parse(snsMessage) : snsMessage;
       } catch {
         log("info", "Skipping non-JSON SNS message", { snsMessage });
         continue;
       }
 
       const { notificationType } = notification;
+      const meta = {
+        projectLabel: slackTarget.projectLabel ?? queueName ?? "unknown-project",
+        queueName,
+      };
 
       if (notificationType === "Bounce") {
         if (!notification.bounce) {
           log("info", "Bounce notification missing bounce field, skipping");
           continue;
         }
-        const payload = buildBounceMessage(notification);
-        await sendToSlack(payload);
+        const payload = buildBounceMessage(notification, meta);
+        await sendToSlack(payload, slackTarget);
         log("info", "Bounce notification sent to Slack", {
           bounceType: notification.bounce.bounceType,
           recipients: notification.bounce.bouncedRecipients.map(
             (r) => r.emailAddress,
           ),
+          project: meta.projectLabel,
         });
       } else if (notificationType === "Complaint") {
         if (!notification.complaint) {
           log("info", "Complaint notification missing complaint field, skipping");
           continue;
         }
-        const payload = buildComplaintMessage(notification);
-        await sendToSlack(payload);
+        const payload = buildComplaintMessage(notification, meta);
+        await sendToSlack(payload, slackTarget);
         log("info", "Complaint notification sent to Slack", {
           feedbackType: notification.complaint.complaintFeedbackType,
           recipients: notification.complaint.complainedRecipients.map(
             (r) => r.emailAddress,
           ),
+          project: meta.projectLabel,
         });
       } else {
         // Delivery notifications — ไม่ส่งไป Slack (volume สูงเกินไป)

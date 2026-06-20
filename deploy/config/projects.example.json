@@ -1,0 +1,28 @@
+{
+  "projects": [
+    {
+      "queueName": "ses-everythai-queue",
+      "projectLabel": "Everythai",
+      "webhookUrl": "https://hooks.slack.com/services/XXX/YYY/ZZZ",
+      "channel": "#test-ses",
+      "filterPolicy": {
+        "notificationType": ["Bounce", "Complaint"],
+        "mail": {
+          "source": ["example@company.com"]
+        }
+      }
+    },
+    {
+      "queueName": "ses-test-queue",
+      "projectLabel": "Test",
+      "webhookUrl": "https://hooks.slack.com/services/AAA/BBB/CCC",
+      "channel": "#notify-test",
+      "filterPolicy": {
+        "notificationType": ["Bounce", "Complaint"],
+        "mail": {
+          "source": ["example@company-test.com"]
+        }
+      }
+    }
+  ]
+}

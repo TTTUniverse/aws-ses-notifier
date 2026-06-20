@@ -1,0 +1,15 @@
+{
+  "name": "aws-ses-notifier",
+  "version": "1.0.0",
+  "description": "AWS SES Bounce Slack Notifier – CI/CD document tests",
+  "private": true,
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "devDependencies": {
+    "vitest": "^1.6.0",
+    "@vitest/coverage-v8": "^1.6.0",
+    "typescript": "^5.4.0"
+  }
+}
