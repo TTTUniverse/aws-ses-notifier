@@ -1,11 +1,6 @@
-issues
-spec
-.github/pull_request_template.md
+.issues
+.specs
 
 # Deploy secrets / local config (ใช้ .env.example และ projects.example.json เป็น template)
 deploy/.env
 deploy/config/projects.json
-
-# Lambda build artifacts
-lambda/ses-bounce-slack-notifier/function.zip
-lambda/ses-bounce-slack-notifier/*.zip
