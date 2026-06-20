@@ -56,7 +56,7 @@
         "sns:SetSubscriptionAttributes",
         "sns:GetSubscriptionAttributes"
       ],
-      "Resource": "arn:aws:sns:*:${AWS_ACCOUNT_ID}:ses-notification-topic"
+      "Resource": "arn:aws:sns:*:${AWS_ACCOUNT_ID}:ses-reputation-alerts"
     },
     {
       "Sid": "LambdaExecutionRole",

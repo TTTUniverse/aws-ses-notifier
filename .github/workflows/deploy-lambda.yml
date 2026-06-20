@@ -19,7 +19,7 @@ permissions:
 
 env:
   FUNCTION_NAME: ses-bounce-slack-notifier
-  SNS_TOPIC_NAME: ses-notification-topic
+  SNS_TOPIC_NAME: ses-reputation-alerts
   LAMBDA_ROLE_NAME: ses-bounce-slack-notifier-role
   LOG_LEVEL: info
 

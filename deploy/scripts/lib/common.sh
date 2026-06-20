@@ -22,7 +22,7 @@ load_env() {
   : "${LAMBDA_MEMORY:=128}"
   : "${LAMBDA_TIMEOUT:=30}"
   : "${LAMBDA_ROLE_NAME:=ses-bounce-slack-notifier-role}"
-  : "${SNS_TOPIC_NAME:=ses-notification-topic}"
+  : "${SNS_TOPIC_NAME:=ses-reputation-alerts}"
   : "${LOG_LEVEL:=info}"
   : "${PROJECTS_CONFIG:=${DEPLOY_DIR}/config/projects.json}"
 
