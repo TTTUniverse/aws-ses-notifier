@@ -7,6 +7,7 @@
       "Action": [
         "lambda:CreateFunction",
         "lambda:GetFunction",
+        "lambda:GetFunctionConfiguration",
         "lambda:UpdateFunctionCode",
         "lambda:UpdateFunctionConfiguration",
         "lambda:CreateEventSourceMapping",

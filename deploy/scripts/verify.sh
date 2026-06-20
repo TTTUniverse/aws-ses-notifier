@@ -49,34 +49,39 @@ else
   echo "   Runtime: ${RUNTIME}, Timeout: ${TIMEOUT}s"
 fi
 
-# 2. Lambda env vars (ใช้ --output json เพราะ --output text อ่าน JSON env var ผิดพลาดได้)
-LAMBDA_ENV="$(aws lambda get-function-configuration \
+# 2. Lambda env vars
+# ใช้ get-function (lambda:GetFunction) — deploy user มักไม่มี GetFunctionConfiguration
+LAMBDA_ENV="$(aws lambda get-function \
   --function-name "${FUNCTION_NAME}" \
   --region "${AWS_REGION}" \
-  --query 'Environment.Variables' \
-  --output json 2>/dev/null || echo '{}')"
+  --query 'Configuration.Environment.Variables' \
+  --output json 2>/dev/null || echo 'null')"
 
-ENV_WEBHOOK_MAP="$(echo "${LAMBDA_ENV}" | jq -r '.WEBHOOK_MAP // empty')"
-SLACK_URL_SET="$(echo "${LAMBDA_ENV}" | jq -r '.SLACK_WEBHOOK_URL // empty')"
+if [[ "${LAMBDA_ENV}" == "null" || "${LAMBDA_ENV}" == "{}" ]]; then
+  check "Lambda environment readable" "cannot read env — add lambda:GetFunction to deploy IAM policy"
+else
+  ENV_WEBHOOK_MAP="$(echo "${LAMBDA_ENV}" | jq -r '.WEBHOOK_MAP // empty')"
+  SLACK_URL_SET="$(echo "${LAMBDA_ENV}" | jq -r '.SLACK_WEBHOOK_URL // empty')"
 
-if [[ -n "${ENV_WEBHOOK_MAP}" ]]; then
-  MAP_KEYS="$(echo "${ENV_WEBHOOK_MAP}" | jq 'keys | length' 2>/dev/null || echo 0)"
-  if [[ "${MAP_KEYS}" -gt 0 ]]; then
-    check "WEBHOOK_MAP configured (${MAP_KEYS} queue(s))" "ok"
+  if [[ -n "${ENV_WEBHOOK_MAP}" ]]; then
+    MAP_KEYS="$(echo "${ENV_WEBHOOK_MAP}" | jq 'keys | length' 2>/dev/null || echo 0)"
+    if [[ "${MAP_KEYS}" -gt 0 ]]; then
+      check "WEBHOOK_MAP configured (${MAP_KEYS} queue(s))" "ok"
+    else
+      check "WEBHOOK_MAP configured (${MAP_KEYS} queue(s))" "empty map — set WEBHOOK_MAP secret or webhookUrl in PROJECTS_CONFIG"
+    fi
   else
-    check "WEBHOOK_MAP configured (${MAP_KEYS} queue(s))" "empty map — set WEBHOOK_MAP secret or webhookUrl in PROJECTS_CONFIG"
+    check "WEBHOOK_MAP configured" "missing or empty"
   fi
-else
-  check "WEBHOOK_MAP configured" "missing or empty"
-fi
 
-if [[ -n "${SLACK_URL_SET}" ]]; then
-  check "SLACK_WEBHOOK_URL (fallback) set" "ok"
-else
-  if [[ "${MAP_KEYS:-0}" -gt 0 ]]; then
-    check "SLACK_WEBHOOK_URL (fallback) set" "ok (optional — WEBHOOK_MAP has entries)"
+  if [[ -n "${SLACK_URL_SET}" ]]; then
+    check "SLACK_WEBHOOK_URL (fallback) set" "ok"
   else
-    check "SLACK_WEBHOOK_URL (fallback) set" "missing — Lambda will fail without queue mapping"
+    if [[ "${MAP_KEYS:-0}" -gt 0 ]]; then
+      check "SLACK_WEBHOOK_URL (fallback) set" "ok (optional — WEBHOOK_MAP has entries)"
+    else
+      check "SLACK_WEBHOOK_URL (fallback) set" "missing — Lambda will fail without queue mapping"
+    fi
   fi
 fi
 
