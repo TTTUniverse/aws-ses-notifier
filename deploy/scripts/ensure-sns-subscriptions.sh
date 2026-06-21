@@ -57,22 +57,20 @@ for i in $(seq 0 $((QUEUE_COUNT - 1))); do
     echo "Subscription exists: ${SUB_ARN}"
   fi
 
-  # Update filter policy + scope (idempotent)
+  # Set FilterPolicyScope to MessageBody before FilterPolicy. New subscriptions
+  # default to MessageAttributes, which rejects nested keys like mail.source.
+  aws sns set-subscription-attributes \
+    --subscription-arn "${SUB_ARN}" \
+    --attribute-name FilterPolicyScope \
+    --attribute-value MessageBody \
+    --region "${AWS_REGION}"
+
   # Apply (or refresh) the FilterPolicy so only relevant messages
   # (matching this project's rules) get delivered to its queue.
   aws sns set-subscription-attributes \
     --subscription-arn "${SUB_ARN}" \
     --attribute-name FilterPolicy \
     --attribute-value "${FILTER_POLICY}" \
-    --region "${AWS_REGION}"
-
-  # Set FilterPolicyScope to MessageBody so the filter policy is evaluated
-  # against the JSON content of the SES notification itself, not just the
-  # SNS message attributes.
-  aws sns set-subscription-attributes \
-    --subscription-arn "${SUB_ARN}" \
-    --attribute-name FilterPolicyScope \
-    --attribute-value MessageBody \
     --region "${AWS_REGION}"
 
   # SQS subscriptions normally auto-confirm immediately, but check the
