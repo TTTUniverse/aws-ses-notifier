@@ -108,6 +108,24 @@ wait_for_lambda() {
   return 1
 }
 
+wait_for_event_source_mapping() {
+  local uuid="$1"
+  local label="${2:-SQS trigger}"
+  for i in $(seq 1 24); do
+    local state
+    state="$(aws lambda get-event-source-mapping \
+      --uuid "${uuid}" \
+      --region "${AWS_REGION}" \
+      --query 'State' \
+      --output text 2>/dev/null || echo "Unknown")"
+    echo "[${i}/24] ${label}: ${state}"
+    [[ "${state}" == "Enabled" ]] && return 0
+    sleep 5
+  done
+  echo "Timed out waiting for event source mapping ${uuid}"
+  return 1
+}
+
 get_queue_arn() {
   local queue_name="$1"
   aws sqs get-queue-url --queue-name "${queue_name}" --region "${AWS_REGION}" \

@@ -155,5 +155,86 @@ ses-b-queue      ─┼──► Lambda: ses-bounce-slack-notifier (โค้ด
 > Filter policy นี้ใช้ scope แบบ `MessageBody` (ตั้งโดยสคริปต์ `ensure-sns-subscriptions.sh` อัตโนมัติ) หมายความว่า SNS จะเช็คเนื้อหา JSON ของ SES notification เอง
 
 
+# วิธีเพิ่ม Queue ของโปรเจกต์ใหม่ (ses-bounce-slack-notifier)
+
+เมื่อมีโปรเจกต์ใหม่ที่ต้องการรับ SES Bounce/Complaint แจ้งเตือนไปยัง Slack channel ของตัวเอง ให้ทำตามขั้นตอนนี้
+
+## 1. เพิ่ม entry ใหม่ใน `projects.json`
+
+ไฟล์ที่ใช้งานจริงคือ `deploy/config/projects.json` (ไม่ commit เข้า repo — อยู่ใน `.gitignore`)
+หากรันผ่าน GitHub Actions ไฟล์นี้จะถูกสร้างจาก GitHub Secret ชื่อ `PROJECTS_CONFIG`
+
+เพิ่ม object ใหม่ใน array `projects` เช่น:
+
+```json
+{
+  "queueName": "ses-newproject-queue",
+  "projectLabel": "New Project",
+  "webhookUrl": "https://hooks.slack.com/services/XXX/YYY/ZZZ",
+  "channel": "#newproject-alerts",
+  "filterPolicy": {
+    "notificationType": ["Bounce", "Complaint"],
+    "mail": {
+      "source": ["sender@newproject.com"]
+    }
+  }
+}
+```
+
+### กฎสำคัญของแต่ละ field
+
+| Field | จำเป็น | ข้อกำหนด |
+|---|---|---|
+| `queueName` | ✅ | **ต้องขึ้นต้นด้วย `ses-`** เท่านั้น เพราะ IAM policy ของ deploy user จำกัดสิทธิ์ SQS ไว้ที่ pattern `arn:aws:sqs:<region>:<account-id>:ses-*` |
+| `projectLabel` | ✅ | ชื่อแสดงผลในข้อความ Slack และ log |
+| `webhookUrl` | ✅ | ต้องเป็น Slack Incoming Webhook URL จริง (ห้ามใส่ placeholder เช่น `.../XXX/YYY/ZZZ`) |
+| `channel` | ⭕ optional | override channel ปลายทาง ถ้าไม่ใส่จะใช้ default ของ webhook นั้น |
+| `filterPolicy` | ✅ | กำหนดว่า SES notification แบบไหนจะถูกส่งเข้าคิวนี้ (ดูด้านล่าง) |
+
+### `filterPolicy` ย่อย
+
+- `notificationType`: array เช่น `["Bounce", "Complaint"]` (ไม่ใส่ `Delivery` เพราะ volume สูงเกินไป)
+- `mail.source`: array ของ sender email ที่ใช้แยกว่าข้อความนี้เป็นของโปรเจกต์ไหน
+
+> Filter policy ใช้ scope แบบ `MessageBody` ซึ่งสคริปต์ `ensure-sns-subscriptions.sh` จะตั้งค่าให้อัตโนมัติ ไม่ต้องทำเอง
+
+## 2. อัปเดต GitHub Secret `PROJECTS_CONFIG`
+
+1. ไปที่ Repo → **Settings → Secrets and variables → Actions**
+2. แก้ไข secret ชื่อ `PROJECTS_CONFIG`
+3. ใส่เนื้อหา `projects.json` **ทั้งไฟล์** (รวมโปรเจกต์เดิม + โปรเจกต์ใหม่) เป็น JSON ที่ valid
+
+> ถ้ารัน local แทน ให้แก้ไฟล์ `deploy/config/projects.json` ตรง ๆ (สร้างจาก `projects.example.json` เป็น template ได้)
+
+## 3. ตรวจสอบ IAM policy ของ deploy user (เฉพาะกรณีจำเป็น)
+
+ปกติไม่ต้องแก้ ถ้า `queueName` ใหม่ขึ้นต้นด้วย `ses-` เหมือนเดิม เพราะ policy ใน
+`deploy/iam/github-actions-deploy-policy.json` (Sid: `SqsQueues`) ครอบคลุม pattern `ses-*` อยู่แล้ว
+
+ต้องแก้เฉพาะกรณี:
+- เปลี่ยน prefix ชื่อ queue ไม่ใช้ `ses-` แล้ว → ต้องอัปเดต Resource ARN ใน policy
+- เปลี่ยน region หรือ account ใหม่
+
+
+## 4. ตรวจสอบผลลัพธ์
+
+- ดู GitHub Actions job summary หลัง deploy เสร็จ จะมีตาราง list queue ทั้งหมดรวมโปรเจกต์ใหม่
+- หรือรัน `deploy/scripts/verify.sh` เอง (ถ้ารัน local) เพื่อเช็คทุก component แบบละเอียด
+
+## 5. ตั้งค่า SES ฝั่ง Sender (ถ้ายังไม่มี)
+
+ตรวจสอบว่า sender email ที่ใส่ใน `mail.source` ของ filter policy:
+- เป็น verified identity บน SES แล้ว
+- มีการตั้งค่าให้ Bounce/Complaint notification ส่งไปที่ SNS topic `ses-reputation-alerts` (ผ่าน Configuration Set หรือ identity-level notification)
+
+---
+
+**สรุปสั้น**: แก้ `projects.json` (เพิ่ม object โปรเจกต์ใหม่) → อัปเดต Secret `PROJECTS_CONFIG` → push เข้า `main` หรือรัน workflow manual → ตรวจสอบผลผ่าน Actions summary
+
+
 ## Trigger deploy ครั้งแรก
  workflow จะรันตอนอัตโนมัตเมื่อ push code เข้า main (เฉพาะไฟล์ lambda/... หรือ deploy/**) หรือสามารถกด Actions → Deploy Lambda → Run workflow (workflow_dispatch) เพื่อรัน manual ได้
+
+
+
+ delete SQS, SNS

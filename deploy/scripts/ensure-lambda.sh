@@ -143,12 +143,15 @@ for i in $(seq 0 $((QUEUE_COUNT - 1))); do
   fi
 
   echo "Creating SQS trigger: ${QUEUE_NAME}"
-  aws lambda create-event-source-mapping \
+  MAPPING_UUID="$(aws lambda create-event-source-mapping \
     --function-name "${FUNCTION_NAME}" \
     --event-source-arn "${QUEUE_ARN}" \
     --batch-size 10 \
     --enabled \
-    --region "${AWS_REGION}" >/dev/null
+    --region "${AWS_REGION}" \
+    --query 'UUID' \
+    --output text)"
+  wait_for_event_source_mapping "${MAPPING_UUID}" "SQS trigger ${QUEUE_NAME}"
 done
 
 echo "Lambda deployment complete: ${FUNCTION_ARN}"

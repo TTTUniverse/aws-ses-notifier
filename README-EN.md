@@ -150,6 +150,83 @@ This file is the main config that determines which SQS queue each project uses, 
 
 > This filter policy uses `MessageBody` scope (set automatically by the `ensure-sns-subscriptions.sh` script), meaning SNS checks the JSON content of the SES notification itself.
 
+
+# How to Add a New Project Queue (ses-bounce-slack-notifier)
+
+When a new project needs SES Bounce/Complaint alerts sent to its own Slack channel, follow these steps.
+
+## 1. Add a new entry in `projects.json`
+
+The runtime file is `deploy/config/projects.json` (not committed to the repo — listed in `.gitignore`).
+When running via GitHub Actions, this file is generated from the GitHub Secret `PROJECTS_CONFIG`.
+
+Add a new object to the `projects` array, e.g.:
+
+```json
+{
+  "queueName": "ses-newproject-queue",
+  "projectLabel": "New Project",
+  "webhookUrl": "https://hooks.slack.com/services/XXX/YYY/ZZZ",
+  "channel": "#newproject-alerts",
+  "filterPolicy": {
+    "notificationType": ["Bounce", "Complaint"],
+    "mail": {
+      "source": ["sender@newproject.com"]
+    }
+  }
+}
+```
+
+### Field requirements
+
+| Field | Required? | Rule |
+|---|---|---|
+| `queueName` | ✅ | **Must start with `ses-`** — the deploy user's IAM policy scopes SQS permissions to the pattern `arn:aws:sqs:<region>:<account-id>:ses-*` |
+| `projectLabel` | ✅ | Display name shown in Slack messages and logs |
+| `webhookUrl` | ✅ | Must be a real Slack Incoming Webhook URL (no placeholders like `.../XXX/YYY/ZZZ`) |
+| `channel` | ⭕ Optional | Overrides the webhook's default destination channel. If omitted, the webhook's own default is used |
+| `filterPolicy` | ✅ | Determines which SES notifications get routed to this queue (see below) |
+
+### `filterPolicy` sub-fields
+
+- `notificationType`: array, e.g. `["Bounce", "Complaint"]` (`Delivery` is excluded — volume is too high)
+- `mail.source`: array of sender email addresses used to identify which project a message belongs to
+
+> The filter policy uses `MessageBody` scope, which the `ensure-sns-subscriptions.sh` script sets automatically — no manual action needed.
+
+## 2. Update the GitHub Secret `PROJECTS_CONFIG`
+
+1. Go to Repo → **Settings → Secrets and variables → Actions**
+2. Edit the secret named `PROJECTS_CONFIG`
+3. Paste the **entire** `projects.json` content (existing projects + the new one) as valid JSON
+
+> If running locally instead, edit `deploy/config/projects.json` directly (you can start from `projects.example.json` as a template).
+
+## 3. Check the deploy user's IAM policy (only if needed)
+
+Normally no change is needed if the new `queueName` still starts with `ses-`, since the
+`SqsQueues` statement in `deploy/iam/github-actions-deploy-policy.json` already covers the `ses-*` pattern.
+
+Only update it if:
+- You change the queue name prefix away from `ses-`
+- You move to a different region or AWS account
+
+## 4. Verify the result
+
+- Check the GitHub Actions job summary after the deploy finishes — it lists all configured queues, including the new project
+- Or run `deploy/scripts/verify.sh` yourself (if running locally) for a detailed component-by-component check
+
+## 5. Set up SES on the sender side (if not already done)
+
+Make sure the sender email used in the filter policy's `mail.source`:
+- Is a verified identity in SES
+- Is configured to send Bounce/Complaint notifications to the SNS topic `ses-reputation-alerts` (via a Configuration Set or identity-level notification settings)
+
+---
+
+**Quick summary**: Edit `projects.json` (add the new project object) → update the `PROJECTS_CONFIG` secret → push to `main` or run the workflow manually → verify the result in the Actions summary.
+
+
 ## Triggering the First Deploy
 
 The workflow runs automatically when code is pushed to `main` (only when files under `lambda/...` or `deploy/**` change), or you can trigger it manually via **Actions → Deploy Lambda → Run workflow** (workflow_dispatch).
